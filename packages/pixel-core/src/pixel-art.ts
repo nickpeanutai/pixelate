@@ -38,6 +38,21 @@ export interface PixelArtProcessResult {
   palette: RGB[];
 }
 
+export interface AnimationSizeEstimate {
+  /** Median number of source-image pixels represented by one apparent art pixel. */
+  sourcePixelStep: number;
+  /** Apparent source-art grid before Pixelate's 2× density recommendation. */
+  detectedWidth: number;
+  detectedHeight: number;
+  /** Recommended logical grid after doubling, before snapping to a preset. */
+  doubledWidth: number;
+  doubledHeight: number;
+  /** Nearest supported square animation output. */
+  preset: number;
+  /** Number of representative frames that produced a usable estimate. */
+  samples: number;
+}
+
 interface Vec3 { 0: number; 1: number; 2: number }
 interface WeightedPoint { value: Vec3; weight: number }
 interface HistogramEntry { count: number; r: number; g: number; b: number }
@@ -457,6 +472,65 @@ function median(values: number[]) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+/** Sprite Fusion Pixel Snapper-style gradient peak spacing on a quantized frame. */
+function estimateQuantizedSourcePixelStep(source: ImageData) {
+  if (source.width < 8 || source.height < 8) return undefined;
+  const profileX = new Float64Array(source.width); const profileY = new Float64Array(source.height);
+  const gray = (x: number, y: number) => {
+    const offset = (y * source.width + x) * 4;
+    if (source.data[offset + 3] < 16) return 0;
+    return 0.299 * source.data[offset] + 0.587 * source.data[offset + 1] + 0.114 * source.data[offset + 2];
+  };
+  for (let y = 0; y < source.height; y++) for (let x = 1; x < source.width - 1; x++) {
+    profileX[x] += Math.abs(gray(x + 1, y) - gray(x - 1, y));
+  }
+  for (let x = 0; x < source.width; x++) for (let y = 1; y < source.height - 1; y++) {
+    profileY[y] += Math.abs(gray(x, y + 1) - gray(x, y - 1));
+  }
+  const estimateAxis = (profile: Float64Array) => {
+    let maximum = 0;
+    for (const value of profile) maximum = Math.max(maximum, value);
+    if (maximum <= 0) return undefined;
+    const threshold = maximum * 0.2; const peaks: number[] = [];
+    for (let index = 1; index < profile.length - 1; index++) {
+      // Select the trailing edge of a flat two-sample gradient peak. Strict
+      // maxima alone miss ideal nearest-neighbor pixel boundaries.
+      if (profile[index] < threshold || profile[index] < profile[index - 1] || profile[index] <= profile[index + 1]) continue;
+      if (!peaks.length || index - peaks[peaks.length - 1] > 3) peaks.push(index);
+    }
+    if (peaks.length < 2) return undefined;
+    return median(peaks.slice(1).map((peak, index) => peak - peaks[index]));
+  };
+  const stepX = estimateAxis(profileX); const stepY = estimateAxis(profileY);
+  if (stepX === undefined && stepY === undefined) return undefined;
+  if (stepX === undefined) return stepY;
+  if (stepY === undefined) return stepX;
+  return Math.max(stepX, stepY) / Math.min(stepX, stepY) > 1.8 ? Math.min(stepX, stepY) : (stepX + stepY) / 2;
+}
+
+export function estimateAnimationOutputSize(frames: ImageData[], paletteSize = 24, presets = [32, 64, 128, 256]): AnimationSizeEstimate | undefined {
+  if (!frames.length || !presets.length) return undefined;
+  const sampleCount = Math.min(5, frames.length);
+  const samples = Array.from({ length: sampleCount }, (_, index) => frames[Math.round(index * (frames.length - 1) / Math.max(1, sampleCount - 1))]);
+  const palette = derivePerceptualPalette(samples, paletteSize);
+  const steps = samples
+    .map((frame) => estimateQuantizedSourcePixelStep(applyPerceptualPalette(frame, palette)))
+    .filter((step): step is number => step !== undefined && Number.isFinite(step) && step >= 2);
+  if (!steps.length) return undefined;
+  const sourcePixelStep = median(steps);
+  const width = median(samples.map((frame) => frame.width)); const height = median(samples.map((frame) => frame.height));
+  const detectedWidth = Math.max(1, Math.round(width / sourcePixelStep));
+  const detectedHeight = Math.max(1, Math.round(height / sourcePixelStep));
+  const doubledWidth = detectedWidth * 2; const doubledHeight = detectedHeight * 2;
+  const requested = Math.max(doubledWidth, doubledHeight);
+  const sortedPresets = [...new Set(presets.map((preset) => Math.max(1, Math.round(preset))))].sort((a, b) => a - b);
+  const preset = sortedPresets.reduce((best, candidate) => {
+    const distance = Math.abs(candidate - requested); const bestDistance = Math.abs(best - requested);
+    return distance < bestDistance || (distance === bestDistance && candidate > best) ? candidate : best;
+  }, sortedPresets[0]);
+  return { sourcePixelStep, detectedWidth, detectedHeight, doubledWidth, doubledHeight, preset, samples: steps.length };
+}
+
 /** PerfectPixel's Sobel-gradient fallback for an absent or invalid FFT grid. */
 function estimatePerfectPixelGradientGrid(source: ImageData, sums: { x: Float64Array; y: Float64Array }) {
   const findPeaks = (values: Float64Array) => {
@@ -803,18 +877,128 @@ export function pixelateImageData(source: ImageData, width: number, height: numb
   return { imageData, grid, gridRecovered: recovered.gridRecovered, palette };
 }
 
-export function pixelateAnimationFrames(frames: ImageData[], width: number, height: number, paletteSize = 24, gridSourceFrames: ImageData[] = frames, gridHint?: PixelGridDetection) {
-  if (!frames.length) return { frames: [] as ImageData[], palette: [] as RGB[], grid: undefined as PixelGridDetection | undefined };
-  const detectionSources = gridSourceFrames.length === frames.length ? gridSourceFrames : frames;
-  // An image-to-video sequence inherits its lattice from the first untouched
-  // extracted frame. Reuse extraction-time detection when supplied so the UI
-  // target and the grid used for sampling cannot diverge.
-  const detectedGrid = gridHint?.detected ? gridHint : detectPseudoPixelGrid(detectionSources[0]);
-  const recovered = frames.map((frame) => recoverPixelArtSource(frame, detectedGrid, true).imageData);
-  const cropBounds = sharedContentBounds(recovered);
-  const resized = recovered.map((frame) => fitPixelArt(cropPixelArt(frame, cropBounds), width, height));
-  const palette = derivePerceptualPalette(resized, paletteSize);
-  return { frames: resized.map((frame) => applyPerceptualPalette(frame, palette)), palette, grid: detectedGrid.detected ? detectedGrid : undefined };
+interface WeightedCellColor { r: number; g: number; b: number; weight: number }
+
+function robustCellColor(source: ImageData, firstX: number, lastX: number, firstY: number, lastY: number) {
+  const colors: WeightedCellColor[] = []; let opaqueWeight = 0; let transparentWeight = 0;
+  for (let sourceY = firstY; sourceY < Math.min(source.height, lastY); sourceY++) for (let sourceX = firstX; sourceX < Math.min(source.width, lastX); sourceX++) {
+    const offset = (sourceY * source.width + sourceX) * 4; const weight = source.data[offset + 3] / 255;
+    transparentWeight += 1 - weight;
+    if (weight > 0) {
+      colors.push({ r: source.data[offset], g: source.data[offset + 1], b: source.data[offset + 2], weight });
+      opaqueWeight += weight;
+    }
+  }
+  if (!colors.length || transparentWeight >= opaqueWeight) return undefined;
+
+  let meanR = 0; let meanG = 0; let meanB = 0;
+  for (const color of colors) { meanR += color.r * color.weight; meanG += color.g * color.weight; meanB += color.b * color.weight; }
+  meanR /= opaqueWeight; meanG /= opaqueWeight; meanB /= opaqueWeight;
+  let variance = 0;
+  for (const color of colors) variance += color.weight * ((color.r - meanR) ** 2 + (color.g - meanG) ** 2 + (color.b - meanB) ** 2);
+  variance /= opaqueWeight;
+
+  // PerfectPixel's median sampler is robust to compression noise in flat
+  // interior cells, where clustering would manufacture unstable shade splits.
+  if (variance < 220) {
+    const weightedMedian = (channel: "r" | "g" | "b") => {
+      const ordered = [...colors].sort((a, b) => a[channel] - b[channel]); let accumulated = 0;
+      for (const color of ordered) { accumulated += color.weight; if (accumulated >= opaqueWeight / 2) return color[channel]; }
+      return ordered[ordered.length - 1][channel];
+    };
+    return [weightedMedian("r"), weightedMedian("g"), weightedMedian("b")] as RGB;
+  }
+
+  // PerfectPixel-style two-cluster majority sampling. Cluster raw cell colors
+  // before palette mapping so codec variants of one shade vote together.
+  let first = colors[0];
+  for (const color of colors) if ((color.r - first.r) ** 2 + (color.g - first.g) ** 2 + (color.b - first.b) ** 2 > 0) { first = color; break; }
+  let c0 = first; let farthest = -1;
+  for (const color of colors) {
+    const distance = (color.r - first.r) ** 2 + (color.g - first.g) ** 2 + (color.b - first.b) ** 2;
+    if (distance > farthest) { farthest = distance; c0 = color; }
+  }
+  let c1 = c0; farthest = -1;
+  for (const color of colors) {
+    const distance = (color.r - c0.r) ** 2 + (color.g - c0.g) ** 2 + (color.b - c0.b) ** 2;
+    if (distance > farthest) { farthest = distance; c1 = color; }
+  }
+  let center0: RGB = [c0.r, c0.g, c0.b]; let center1: RGB = [c1.r, c1.g, c1.b]; let weight0 = 0; let weight1 = 0;
+  for (let iteration = 0; iteration < 4; iteration++) {
+    let r0 = 0; let g0 = 0; let b0 = 0; let r1 = 0; let g1 = 0; let b1 = 0; weight0 = 0; weight1 = 0;
+    for (const color of colors) {
+      const distance0 = (color.r - center0[0]) ** 2 + (color.g - center0[1]) ** 2 + (color.b - center0[2]) ** 2;
+      const distance1 = (color.r - center1[0]) ** 2 + (color.g - center1[1]) ** 2 + (color.b - center1[2]) ** 2;
+      if (distance1 < distance0) { r1 += color.r * color.weight; g1 += color.g * color.weight; b1 += color.b * color.weight; weight1 += color.weight; }
+      else { r0 += color.r * color.weight; g0 += color.g * color.weight; b0 += color.b * color.weight; weight0 += color.weight; }
+    }
+    if (weight0 > 0) center0 = [r0 / weight0, g0 / weight0, b0 / weight0];
+    if (weight1 > 0) center1 = [r1 / weight1, g1 / weight1, b1 / weight1];
+  }
+  return weight1 > weight0 ? center1 : center0;
+}
+
+function reconstructFrameAtBaseGrid(source: ImageData, width: number, height: number, palette: RGB[], previous?: ImageData) {
+  const targetWidth = Math.max(1, Math.round(width)); const targetHeight = Math.max(1, Math.round(height));
+  const output = makeImageData(targetWidth, targetHeight);
+  const colorCache = new Map<number, number>();
+  const nearestPaletteIndex = (r: number, g: number, b: number) => {
+    const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    const cached = colorCache.get(key);
+    if (cached !== undefined) return cached;
+    // Measure from the deterministic center of the 5-bit cache bucket. Using
+    // the first encountered source color makes the mapping traversal- and
+    // frame-dependent even when every frame shares the same palette.
+    const bucketR = (((key >> 10) & 31) << 3) + 4;
+    const bucketG = (((key >> 5) & 31) << 3) + 4;
+    const bucketB = ((key & 31) << 3) + 4;
+    let best = 0; let bestDistance = Infinity;
+    for (let index = 0; index < palette.length; index++) {
+      const color = palette[index];
+      const distance = (bucketR - color[0]) ** 2 + (bucketG - color[1]) ** 2 + (bucketB - color[2]) ** 2;
+      if (distance < bestDistance) { best = index; bestDistance = distance; }
+    }
+    colorCache.set(key, best);
+    return best;
+  };
+  for (let y = 0; y < targetHeight; y++) for (let x = 0; x < targetWidth; x++) {
+    const firstX = Math.floor(x * source.width / targetWidth); const lastX = Math.max(firstX + 1, Math.floor((x + 1) * source.width / targetWidth));
+    const firstY = Math.floor(y * source.height / targetHeight); const lastY = Math.max(firstY + 1, Math.floor((y + 1) * source.height / targetHeight));
+    const sample = robustCellColor(source, firstX, lastX, firstY, lastY);
+    const target = (y * targetWidth + x) * 4;
+    if (!sample) continue;
+    let winner = nearestPaletteIndex(sample[0], sample[1], sample[2]);
+    if (previous?.data[target + 3]) {
+      const previousColor: RGB = [previous.data[target], previous.data[target + 1], previous.data[target + 2]];
+      const previousIndex = palette.findIndex((color) => color[0] === previousColor[0] && color[1] === previousColor[1] && color[2] === previousColor[2]);
+      if (previousIndex >= 0 && previousIndex !== winner) {
+        const currentColor = palette[winner];
+        const currentDistance = (sample[0] - currentColor[0]) ** 2 + (sample[1] - currentColor[1]) ** 2 + (sample[2] - currentColor[2]) ** 2;
+        const previousDistance = (sample[0] - previousColor[0]) ** 2 + (sample[1] - previousColor[1]) ** 2 + (sample[2] - previousColor[2]) ** 2;
+        const paletteDistance = (currentColor[0] - previousColor[0]) ** 2 + (currentColor[1] - previousColor[1]) ** 2 + (currentColor[2] - previousColor[2]) ** 2;
+        // Keep the prior palette entry only for an ambiguous choice between
+        // nearby shades. Decisive color changes and silhouette motion pass
+        // through, avoiding trails while suppressing codec-driven flicker.
+        if (paletteDistance <= 34 ** 2 && previousDistance <= currentDistance + 180) winner = previousIndex;
+      }
+    }
+    output.data[target] = palette[winner][0]; output.data[target + 1] = palette[winner][1]; output.data[target + 2] = palette[winner][2]; output.data[target + 3] = 255;
+  }
+  return output;
+}
+
+/**
+ * Fixed-resolution animation snapper. Every selected output pixel is
+ * independently reconstructed with robust full-frame cells and one shared
+ * palette. This intentionally bypasses FFT/Sobel grid detection for video.
+ */
+export function pixelateAnimationFrames(frames: ImageData[], width: number, height: number, paletteSize = 24) {
+  if (!frames.length) return { frames: [] as ImageData[], palette: [] as RGB[] };
+  const palette = derivePerceptualPalette(frames, paletteSize);
+  const outputWidth = Math.max(1, Math.round(width)); const outputHeight = Math.max(1, Math.round(height));
+  const reconstructed: ImageData[] = [];
+  for (const frame of frames) reconstructed.push(reconstructFrameAtBaseGrid(frame, outputWidth, outputHeight, palette, reconstructed[reconstructed.length - 1]));
+  return { frames: reconstructed, palette };
 }
 
 export function naiveResizeImageData(source: ImageData, width: number, height: number) {

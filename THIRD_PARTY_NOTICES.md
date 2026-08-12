@@ -48,7 +48,35 @@ The product and algorithm design was informed by the following projects:
 - perfectPixel (MIT metadata, inspected commit
   `72096de5cf1bff9102687c4f89af6f62c4273a86`) — FFT grid-period estimation
   by theAmusing, Sobel-gradient fallback, validity rules, and local edge-aligned
-  cell-boundary algorithm ported to browser-local TypeScript for ImageData.
+  cell-boundary algorithm ported to browser-local TypeScript for ImageData;
+  median/majority cell sampling also informed Pixelate's rigid true-resolution
+  animation reconstruction path.
+- Sprite Fusion Pixel Snapper (MIT, inspected local `main` checkout) —
+  pre-quantized gradient profiles and median peak-spacing estimation, fixed
+  uniform grid cuts, and dominant-cell sampling concepts adapted for Pixelate's
+  fixed-resolution animation path.
+
+Sprite Fusion Pixel Snapper is distributed under the MIT License:
+
+Copyright (c) 2025 Hugo Duprez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 BetterPixelArtDownscale (inspected commit
 `a80d141dc19c745ca6fb25f2814715e0203f02d5`) had no standalone license in the

@@ -8,7 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { createHistory, commit, redo, undo } from "@pixel-sprite/editor-core";
 import { downloadBlob, composeSpriteSheet, frameSetDimensions } from "@pixel-sprite/export-core";
-import { detectPseudoPixelGrid, pixelateAnimationFrames, processImageUrl, removeChromaBackground, validateExternalVideoReference, type ChromaKeyName, type PixelGridDetection, type VideoReferenceAssessment } from "@pixel-sprite/pixel-core";
+import { detectPseudoPixelGrid, estimateAnimationOutputSize, pixelateAnimationFrames, processImageUrl, removeChromaBackground, validateExternalVideoReference, type AnimationSizeEstimate, type ChromaKeyName, type PixelGridDetection, type VideoReferenceAssessment } from "@pixel-sprite/pixel-core";
 import {
   createProject, DEFAULT_PROMPT_IMAGE_SIZE, deleteReferenceImage, deleteSourceImage,
   deleteSourceVideo, loadLastProject, loadReferenceImage, loadSourceImage,
@@ -22,6 +22,7 @@ import { canvasDisplaySize, fitCanvasZoom, maxZoom, minZoom, zoomIn, zoomOut } f
 import { normalizePlaybackFps } from "./frame-picker";
 import { originalFrameDrawTransform, type OriginalFrameFitting } from "./frame-output";
 import { generatePrompt, getPromptTemplate, getPromptTemplates } from "./external-prompt";
+import { deleteExtractedFrame, duplicateExtractedFrame, mirrorExtractedFrame, type EditableExtractedFrame } from "./extracted-frame-edit";
 import { fetchGitHubStars, formatStarCount, GITHUB_REPOSITORY_URL, readCachedGitHubStars } from "./github-stars";
 import "./styles.css";
 
@@ -29,8 +30,8 @@ type Toast = { kind: "success" | "error" | "info"; message: string } | null;
 type SourceVideoAsset = { blob: Blob; url: string; metadata: SourceVideoMetadata };
 type ReferenceImageAsset = { blob: Blob; url: string; metadata: ReferenceImageMetadata };
 type SourceImageAsset = { blob: Blob; url: string; metadata: SourceImageMetadata };
-type ExtractedFrame = { frame: ProjectFrame; imageData: ImageData; timeMs: number };
-type PendingFrameSet = { sourceVideoId: string; frames: ExtractedFrame[]; gridDetection: PixelGridDetection; applied: boolean };
+type ExtractedFrame = EditableExtractedFrame;
+type PendingFrameSet = { sourceVideoId: string; frames: ExtractedFrame[]; sizeEstimate?: AnimationSizeEstimate; applied: boolean };
 type PixelationWarning = { mediaKind: "image" | "video"; chromaKey: ChromaKeyName; reason: string };
 
 const referenceDragType = "application/x-pixel-sprite-reference";
@@ -38,7 +39,8 @@ const referenceDragFallbackPrefix = "pixel-sprite-reference:v1:";
 const supportedReferenceTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const maxReferenceSize = 10 * 1024 * 1024;
 
-const sizePresets = [16, 32, 48, 64, 96, 128, 256];
+const imageSizePresets = [16, 32, 48, 64, 96, 128, 256];
+const animationSizePresets = [32, 64, 128, 256];
 const exportNameStem = (filename: string) => filename
   .replace(/\.[^./]+$/, "")
   .trim()
@@ -251,7 +253,7 @@ async function extractVideoFrames(file: File, selectedTimesMs: number[], fps: nu
   }
 }
 
-async function pixelateExtractedFrames(frames: ExtractedFrame[], width: number, height: number, fps: number, paletteSize: number, backgroundMode: "transparent" | "opaque", chromaKey: ChromaKeyName, gridDetection: PixelGridDetection | undefined, signal: AbortSignal, onProgress: (progress: number) => void) {
+async function pixelateExtractedFrames(frames: ExtractedFrame[], width: number, height: number, fps: number, paletteSize: number, backgroundMode: "transparent" | "opaque", chromaKey: ChromaKeyName, signal: AbortSignal, onProgress: (progress: number) => void) {
     if (!frames.length) throw new VideoExtractionError("Extract frames before pixel processing");
     const count = frames.length;
     const validated: ImageData[] = [];
@@ -274,9 +276,9 @@ async function pixelateExtractedFrames(frames: ExtractedFrame[], width: number, 
     }
 
     signal.throwIfAborted();
-    // Detect the grid from the untouched video frames, then apply that fixed
-    // PerfectPixel grid to the chroma-matted frames.
-    const processed = pixelateAnimationFrames(validated, width, height, paletteSize, frames.map((frame) => frame.imageData), gridDetection);
+    // Video uses an explicit fixed output grid. Shared pre-quantization and
+    // dominant-cell sampling avoid unreliable FFT recovery on compressed frames.
+    const processed = pixelateAnimationFrames(validated, width, height, paletteSize);
     onProgress(0.75);
     const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
     const context = canvas.getContext("2d", { willReadFrequently: true })!;
@@ -285,7 +287,7 @@ async function pixelateExtractedFrames(frames: ExtractedFrame[], width: number, 
       signal.throwIfAborted();
       context.putImageData(imageData, 0, 0);
       onProgress(0.75 + (index + 1) / count * 0.25);
-      return makeFrame(canvas.toDataURL("image/png"), index, fps, width, height, "pixel-art");
+      return { ...makeFrame(canvas.toDataURL("image/png"), index, fps, width, height, "pixel-art"), mirrored: frames[index].frame.mirrored };
     });
 }
 
@@ -337,7 +339,7 @@ async function prepareOriginalFrames(
       transform.outputHeight,
     );
     onProgress((index + 1) / frames.length);
-    return makeFrame(outputCanvas.toDataURL("image/png"), index, fps, transform.outputWidth, transform.outputHeight, "original");
+    return { ...makeFrame(outputCanvas.toDataURL("image/png"), index, fps, transform.outputWidth, transform.outputHeight, "original"), mirrored: frames[index].frame.mirrored };
   });
 }
 
@@ -374,7 +376,7 @@ function GitHubStarPill() {
 }
 
 export function App() {
-  const initial = useMemo(() => createProject("Alchemist scout"), []);
+  const initial = useMemo(() => createProject(), []);
   const [history, setHistory] = useState(() => createHistory(initial));
   const project = history.present;
   const [selectedFrame, setSelectedFrame] = useState(0);
@@ -411,8 +413,6 @@ export function App() {
   const sourceImageInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
   const canvasStageRef = useRef<HTMLDivElement>(null);
-  const seededRef = useRef(false);
-  const restoredProjectRef = useRef(false);
   const sourceVideoUrlRef = useRef<string | null>(null);
   const referenceImageUrlRef = useRef<string | null>(null);
   const sourceImageUrlRef = useRef<string | null>(null);
@@ -469,7 +469,6 @@ export function App() {
       try {
         let saved = await loadLastProject();
         if (!active || !saved) return;
-        restoredProjectRef.current = true;
         const restoreMessages: string[] = [];
         if (saved.sourceImage) {
           let blob: Blob | undefined;
@@ -559,12 +558,6 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [project.target.fps, restoring]);
 
-  useEffect(() => {
-    if (restoring || seededRef.current) return;
-    seededRef.current = true;
-    if (!restoredProjectRef.current) processImage("/assets/demo-alchemist.png", "Demo alchemist");
-  }, [processImage, restoring]);
-
   const activePendingFrames = project.mode === "animation" ? pendingFrames : null;
   const pendingFramePreview = Boolean(activePendingFrames && !activePendingFrames.applied);
   const displayedFrames = activePendingFrames && !activePendingFrames.applied
@@ -594,6 +587,7 @@ export function App() {
   const currentFrameWidth = currentFrame?.width || (unprocessedSourceVisible ? sourceImage!.metadata.width : project.target.width);
   const currentFrameHeight = currentFrame?.height || (unprocessedSourceVisible ? sourceImage!.metadata.height : project.target.height);
   const sourceVideoViewActive = project.mode === "animation" && workspaceView === "video" && Boolean(sourceVideo);
+  const editorMediaUploadVisible = !currentFrame && (project.mode === "image" ? !sourceImage : !sourceVideo);
   const effectiveZoom = fitCanvas && (currentFrame || unprocessedSourceVisible)
     ? fitCanvasZoom(currentFrameWidth, currentFrameHeight, canvasStageSize.width, canvasStageSize.height, 96)
     : zoom;
@@ -880,22 +874,30 @@ export function App() {
       const markers = [...selection.markers].sort((a, b) => a.timeMs - b.timeMs);
       const frames = await extractVideoFrames(file, markers.map((marker) => marker.timeMs), project.target.fps, controller.signal, setProgress);
       controller.signal.throwIfAborted();
-      // Video generation can introduce a different apparent lattice from the
-      // still reference. Run the complete PerfectPixel detector again on the
-      // first untouched frame and lock its Sobel-aligned grid across the animation.
-      const gridDetection = detectPseudoPixelGrid(frames[0].imageData);
-      setPendingFrames({ sourceVideoId: sourceVideo.metadata.id, frames, gridDetection, applied: false });
+      const estimationFrames = project.target.backgroundMode === "transparent"
+        ? frames.map(({ imageData }) => {
+            const matte = removeChromaBackground(imageData, project.target.chromaKey);
+            return matte.stats.success ? matte.imageData : imageData;
+          })
+        : frames.map(({ imageData }) => imageData);
+      const sizeEstimate = estimateAnimationOutputSize(estimationFrames, project.target.paletteSize, animationSizePresets);
+      setPendingFrames({ sourceVideoId: sourceVideo.metadata.id, frames, sizeEstimate, applied: false });
       setFrameOutputExpanded(true);
-      if (gridDetection.detected) {
-        updateProject((current) => ({
-          ...current,
-          target: { ...current.target, width: gridDetection.columns, height: gridDetection.rows, pixelSizeMode: "detected" },
-        }));
-      }
+      updateProject((current) => ({
+        ...current,
+        target: sizeEstimate
+          ? { ...current.target, width: sizeEstimate.preset, height: sizeEstimate.preset, pixelSizeMode: "detected" }
+          : { ...current.target, width: 64, height: 64, pixelSizeMode: "manual" },
+      }));
       setFrameOutputChoice("pixel-art");
       setOriginalExportSize(null);
       setOriginalFrameFitting("contain");
-      setSelectedFrame(0); setFitCanvas(true); setWorkspaceView("video"); setToast({ kind: "success", message: `${frames.length} original frames extracted. Pixel-art frames are selected by default.` });
+      setSelectedFrame(0); setFitCanvas(true); setWorkspaceView("video"); setToast({
+        kind: "success",
+        message: sizeEstimate
+          ? `${frames.length} original frames extracted. Recommended ${sizeEstimate.preset} × ${sizeEstimate.preset} from the estimated source-pixel scale.`
+          : `${frames.length} original frames extracted. Source-pixel scale was inconclusive, so 64 × 64 is selected.`,
+      });
       return true;
     } catch (error) {
       setWorkspaceView("video");
@@ -934,7 +936,7 @@ export function App() {
     abortRef.current = controller;
     setBusy(true); setProgress(0); setFailedSourceMarkerIds([]); setPlaying(false);
     try {
-      const frames = await pixelateExtractedFrames(pendingFrames.frames, project.target.width, project.target.height, project.target.fps, project.target.paletteSize, project.target.backgroundMode, project.target.chromaKey, pendingFrames.gridDetection, controller.signal, setProgress);
+      const frames = await pixelateExtractedFrames(pendingFrames.frames, project.target.width, project.target.height, project.target.fps, project.target.paletteSize, project.target.backgroundMode, project.target.chromaKey, controller.signal, setProgress);
       updateProject((current) => ({ ...current, mode: "animation", frames }));
       setPendingFrames((current) => current ? { ...current, applied: true } : current); setSelectedFrame(0); setFitCanvas(true);
       setFrameOutputExpanded(false);
@@ -943,7 +945,10 @@ export function App() {
     } catch (error) {
       if (error instanceof VideoExtractionError) {
         const selection = project.sourceSelection;
-        setFailedSourceMarkerIds(error.failedIndices.map((index) => selection?.markers[index]?.id).filter((id): id is string => Boolean(id)));
+        setFailedSourceMarkerIds(error.failedIndices.map((index) => {
+          const timeMs = pendingFrames.frames[index]?.timeMs;
+          return selection?.markers.find((marker) => marker.timeMs === timeMs)?.id;
+        }).filter((id): id is string => Boolean(id)));
         if (project.target.backgroundMode === "transparent" && error.failedIndices.length) setPixelationWarning({
           mediaKind: "video",
           chromaKey: project.target.chromaKey,
@@ -1048,9 +1053,37 @@ export function App() {
   };
 
   const editFrames = (fn: (frames: ProjectFrame[]) => ProjectFrame[]) => updateProject((current) => ({ ...current, frames: fn(current.frames) }));
-  const deleteFrame = () => { if (project.frames.length <= 1) return; editFrames((frames) => frames.filter((_, index) => index !== selectedFrame)); setSelectedFrame((index) => Math.max(0, index - 1)); };
-  const duplicateFrame = () => editFrames((frames) => { const copy = { ...frames[selectedFrame], id: crypto.randomUUID(), name: `${frames[selectedFrame].name} copy` }; return [...frames.slice(0, selectedFrame + 1), copy, ...frames.slice(selectedFrame + 1)]; });
-  const mirrorFrame = () => editFrames((frames) => frames.map((frame, index) => index === selectedFrame ? { ...frame, mirrored: !frame.mirrored } : frame));
+  const deleteFrame = () => {
+    if (pendingFramePreview && activePendingFrames) {
+      if (activePendingFrames.frames.length <= 1) return;
+      const frames = deleteExtractedFrame(activePendingFrames.frames, selectedFrame);
+      setPendingFrames({ ...activePendingFrames, frames });
+      setSelectedFrame(Math.min(selectedFrame, frames.length - 1));
+      return;
+    }
+    if (project.frames.length <= 1) return;
+    editFrames((frames) => frames.filter((_, index) => index !== selectedFrame));
+    setSelectedFrame((index) => Math.max(0, index - 1));
+  };
+  const duplicateFrame = () => {
+    if (pendingFramePreview && activePendingFrames) {
+      setPendingFrames({
+        ...activePendingFrames,
+        frames: duplicateExtractedFrame(activePendingFrames.frames, selectedFrame, crypto.randomUUID()),
+      });
+      setSelectedFrame((index) => index + 1);
+      return;
+    }
+    editFrames((frames) => { const copy = { ...frames[selectedFrame], id: crypto.randomUUID(), name: `${frames[selectedFrame].name} copy` }; return [...frames.slice(0, selectedFrame + 1), copy, ...frames.slice(selectedFrame + 1)]; });
+    setSelectedFrame((index) => index + 1);
+  };
+  const mirrorFrame = () => {
+    if (pendingFramePreview && activePendingFrames) {
+      setPendingFrames({ ...activePendingFrames, frames: mirrorExtractedFrame(activePendingFrames.frames, selectedFrame) });
+      return;
+    }
+    editFrames((frames) => frames.map((frame, index) => index === selectedFrame ? { ...frame, mirrored: !frame.mirrored } : frame));
+  };
 
   const exportSheet = async () => {
     if (!project.frames.length) return;
@@ -1088,21 +1121,24 @@ export function App() {
       chromaKey: value === "transparent:green" ? "green" : value === "transparent:magenta" ? "magenta" : current.target.chromaKey,
     },
   }));
-  const targetGridDetection = project.mode === "animation" ? activePendingFrames?.gridDetection : sourceGridDetection;
-  const detectedTarget = targetGridDetection?.detected
-    ? { width: targetGridDetection.columns, height: targetGridDetection.rows, value: `detected:${targetGridDetection.columns}x${targetGridDetection.rows}` }
-    : null;
+  const animationSizeEstimate = project.mode === "animation" ? activePendingFrames?.sizeEstimate : undefined;
+  const detectedTarget = project.mode === "image" && sourceGridDetection?.detected
+      ? { width: sourceGridDetection.columns, height: sourceGridDetection.rows, value: `detected:${sourceGridDetection.columns}x${sourceGridDetection.rows}`, label: `Detected grid — ${sourceGridDetection.columns} × ${sourceGridDetection.rows} px` }
+      : animationSizeEstimate
+        ? { width: animationSizeEstimate.preset, height: animationSizeEstimate.preset, value: `detected:${animationSizeEstimate.preset}x${animationSizeEstimate.preset}`, label: `Recommended — ${animationSizeEstimate.preset} × ${animationSizeEstimate.preset} px` }
+        : null;
+  const activeSizePresets = project.mode === "animation" ? animationSizePresets : imageSizePresets;
   const targetMatchesDetection = Boolean(detectedTarget && project.target.pixelSizeMode === "detected" && project.target.width === detectedTarget.width && project.target.height === detectedTarget.height);
-  const targetMatchesPreset = project.target.width === project.target.height && sizePresets.includes(project.target.width);
+  const targetMatchesPreset = project.target.width === project.target.height && activeSizePresets.includes(project.target.width);
   const targetPixelSizeValue = targetMatchesDetection
     ? detectedTarget!.value
     : targetMatchesPreset
       ? String(project.target.width)
       : `custom:${project.target.width}x${project.target.height}`;
   const targetPixelSizeOptions = <>
-    {detectedTarget && <option value={detectedTarget.value}>Detected grid — {detectedTarget.width} × {detectedTarget.height} px</option>}
+    {detectedTarget && <option value={detectedTarget.value}>{detectedTarget.label}</option>}
     {!targetMatchesDetection && !targetMatchesPreset && <option value={targetPixelSizeValue}>Current — {project.target.width} × {project.target.height} px</option>}
-    {sizePresets.map((size) => <option key={size} value={size}>{size} × {size} px</option>)}
+    {activeSizePresets.map((size) => <option key={size} value={size}>{size} × {size} px</option>)}
   </>;
   const setTargetPixelSize = (value: string) => {
     const detectedMatch = /^detected:(\d+)x(\d+)$/.exec(value);
@@ -1122,7 +1158,7 @@ export function App() {
   const frameOutputPanel = activePendingFrames ? <section className={`frame-output-panel ${frameOutputChoice ? "with-settings" : ""} ${activePendingFrames.applied ? "is-applied" : ""} ${frameOutputExpanded ? "is-expanded" : "is-collapsed"}`} aria-label="Extracted frame output">
     <div className="frame-output-heading">
       <div><span className="workbench-eyebrow">EXTRACTED FRAMES</span><strong>{activePendingFrames.applied ? "Frame output applied" : "Choose frame output"}</strong></div>
-      <span title={activePendingFrames.gridDetection.detected ? undefined : "PerfectPixel could not detect a pixel grid from the first extracted frame"}>{activePendingFrames.frames.length} frames · {activePendingFrames.frames[0]?.frame.width} × {activePendingFrames.frames[0]?.frame.height} · {project.sourceSelection?.extractFps ?? 1} FPS · {activePendingFrames.gridDetection.detected ? `Target ${activePendingFrames.gridDetection.columns} × ${activePendingFrames.gridDetection.rows} px · PerfectPixel` : "Grid not detected"}</span>
+      <span>{activePendingFrames.frames.length} frames · {activePendingFrames.frames[0]?.frame.width} × {activePendingFrames.frames[0]?.frame.height} · {project.sourceSelection?.extractFps ?? 1} FPS · {activePendingFrames.sizeEstimate ? `~${activePendingFrames.sizeEstimate.sourcePixelStep.toFixed(1)} source px/cell · ~${activePendingFrames.sizeEstimate.detectedWidth} × ${activePendingFrames.sizeEstimate.detectedHeight} detected · 2× density recommendation → ${activePendingFrames.sizeEstimate.preset} × ${activePendingFrames.sizeEstimate.preset}` : `fixed ${project.target.width} × ${project.target.height} px output`}</span>
       <IconButton label={frameOutputExpanded ? "Collapse extracted frames panel" : "Expand extracted frames panel"} onClick={() => setFrameOutputExpanded((expanded) => !expanded)}>{frameOutputExpanded ? <CaretDown /> : <CaretUp />}</IconButton>
     </div>
     <div className="frame-output-drawer" aria-hidden={!frameOutputExpanded}>
@@ -1137,12 +1173,12 @@ export function App() {
         </div>
         {frameOutputChoice === "original" && <div className="frame-output-processing">
           <span className="frame-output-processing-label">Original settings</span>
-          <label>Export size<select aria-label="Original frame export size" value={originalExportSize ?? "source"} onChange={(event) => setOriginalExportSize(event.target.value === "source" ? null : Number(event.target.value))}><option value="source">Source size</option>{sizePresets.map((size) => <option key={size} value={size}>{size}px</option>)}</select></label>
+          <label>Export size<select aria-label="Original frame export size" value={originalExportSize ?? "source"} onChange={(event) => setOriginalExportSize(event.target.value === "source" ? null : Number(event.target.value))}><option value="source">Source size</option>{animationSizePresets.map((size) => <option key={size} value={size}>{size}px</option>)}</select></label>
           {originalExportSize !== null && <label>Frame fitting<select aria-label="Original frame fitting" value={originalFrameFitting} onChange={(event) => setOriginalFrameFitting(event.target.value as OriginalFrameFitting)}><option value="contain">Keep aspect ratio</option><option value="crop">Center crop to square</option><option value="stretch">Stretch to square</option></select></label>}
         </div>}
         {frameOutputChoice === "pixel-art" && <div className="frame-output-processing">
           <span className="frame-output-processing-label">Pixel-art settings</span>
-          <label>Size<select aria-label="Pixel-art output size" value={targetPixelSizeValue} onChange={(event) => setTargetPixelSize(event.target.value)}>{targetPixelSizeOptions}</select></label>
+          <label>Fixed output size<select aria-label="Pixel-art output size" value={targetPixelSizeValue} onChange={(event) => setTargetPixelSize(event.target.value)}>{targetPixelSizeOptions}</select></label>
           <label>Palette<select value={project.target.paletteSize} onChange={(event) => updateProject((current) => ({ ...current, target: { ...current.target, paletteSize: Number(event.target.value) } }))}><option value="8">8 colors</option><option value="16">16 colors</option><option value="24">24 colors</option><option value="32">32 colors</option><option value="64">64 colors</option></select></label>
           <label>Background<select value={backgroundValue} onChange={(event) => setBackgroundValue(event.target.value)}><option value="transparent:magenta">Magenta key</option><option value="transparent:green">Green key</option><option value="opaque">Keep background</option></select></label>
         </div>}
@@ -1237,7 +1273,7 @@ export function App() {
               </div>
             </> : <div className="canvas-scroll-content">
               <div className="canvas-meta"><span>{project.mode === "image" ? sourceImage && !currentFrame ? "SOURCE IMAGE" : "PIXEL PREVIEW" : pendingFramePreview ? `EXTRACTED PREVIEW · FRAME ${selectedFrame + 1} OF ${displayedFrames.length}` : `FRAME ${selectedFrame + 1} OF ${displayedFrames.length}`}</span><span>{currentFrame ? `${currentFrameWidth} × ${currentFrameHeight} · ${pendingFramePreview ? "not yet applied" : currentFrame.processing === "original" ? "original frames" : `${project.target.paletteSize} colors`}` : sourceImage && project.mode === "image" ? `${sourceImage.metadata.width} × ${sourceImage.metadata.height} · awaiting processing` : ""}</span></div>
-              <div className={`checkerboard ${!currentFrame ? "editor-media-target" : ""}`} style={previewSize} draggable={Boolean(currentFrame && !pendingFramePreview)} onDragStart={(event) => currentFrame && !pendingFramePreview && startReferenceDrag(event, "project-frame", currentFrame.id)} onDragOver={!currentFrame ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } : undefined} onDrop={!currentFrame ? acceptEditorMediaDrop : undefined} title={currentFrame && !pendingFramePreview ? "Drag this frame to the Reference area" : undefined}>
+              <div className={`checkerboard ${editorMediaUploadVisible ? "editor-media-target" : ""}`} style={editorMediaUploadVisible ? undefined : previewSize} draggable={Boolean(currentFrame && !pendingFramePreview)} onDragStart={(event) => currentFrame && !pendingFramePreview && startReferenceDrag(event, "project-frame", currentFrame.id)} onDragOver={!currentFrame ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } : undefined} onDrop={!currentFrame ? acceptEditorMediaDrop : undefined} title={currentFrame && !pendingFramePreview ? "Drag this frame to the Reference area" : undefined}>
                 {currentFrame ? <img draggable={false} src={currentFrame.dataUrl} className={currentFrame.mirrored ? "mirrored" : ""} style={{ transform: `translate(${currentFrame.offsetX * effectiveZoom}px, ${currentFrame.offsetY * effectiveZoom}px) ${currentFrame.mirrored ? "scaleX(-1)" : ""}` }} alt={`Current sprite ${currentFrame.name}`} /> : project.mode === "image" && sourceImage ? <img draggable={false} src={sourceImage.url} className="source-media-preview" alt={`Source image ${sourceImage.metadata.name}`} /> : project.mode === "animation" && sourceVideo ? <div className="empty-canvas"><FilmStrip /><span>Select source video frames to create the animation</span></div> : <button className="editor-media-upload" onClick={openEditorMediaPicker}><UploadSimple /><strong>{project.mode === "image" ? "Upload image" : "Upload video"}</strong><span>{project.mode === "image" ? "PNG, JPEG or WebP · max 10MB" : "MP4, WebM or MOV · processed locally"}</span></button>}
               </div>
             </div>}
@@ -1265,11 +1301,11 @@ export function App() {
             {displayedFrames.length > 0 && <div className={`timeline-panel ${pendingFramePreview ? "pending-preview" : ""}`}>
               <div className="timeline-header">
                 <div className="playback"><IconButton label={playing ? "Pause animation" : "Play animation"} onClick={() => { setWorkspaceView("frames"); setPlaying((value) => !value); }} disabled={!displayedFrames.length}>{playing ? <Pause weight="fill" /> : <Play weight="fill" />}</IconButton><label className="playback-fps">Playback FPS<input aria-label="Playback FPS" type="number" min="1" max="60" step="1" value={project.target.fps} onChange={(event) => changePlaybackFps(Number(event.target.value))} /></label><span>{(displayedFrames.length / project.target.fps).toFixed(1)}s</span>{pendingFramePreview && <span className="pending-label">Extracted preview · not yet applied</span>}</div>
-                <div className="frame-actions"><IconButton label="Duplicate frame" onClick={duplicateFrame} disabled={pendingFramePreview}><Copy /></IconButton><IconButton label="Mirror frame" onClick={mirrorFrame} disabled={pendingFramePreview}><SelectionBackground /></IconButton><IconButton label="Delete frame" onClick={deleteFrame} disabled={pendingFramePreview || project.frames.length <= 1}><Trash /></IconButton></div>
+                <div className="frame-actions"><IconButton label="Duplicate frame" onClick={duplicateFrame} disabled={!currentFrame}><Copy /></IconButton><IconButton label="Mirror frame" onClick={mirrorFrame} disabled={!currentFrame}><SelectionBackground /></IconButton><IconButton label="Delete frame" onClick={deleteFrame} disabled={displayedFrames.length <= 1}><Trash /></IconButton></div>
               </div>
               <div className="timeline-strip">
                 {sourceVideo && <button className={`frame-thumb source-video-thumb ${workspaceView === "video" ? "selected" : ""}`} title="Show source video" aria-label="Show source video" onClick={() => { setPlaying(false); setWorkspaceView("video"); }}><span>Video</span><FilmStrip /></button>}
-                {displayedFrames.map((frame, index) => <button key={frame.id} draggable={!pendingFramePreview} onDragStart={(event) => !pendingFramePreview && startReferenceDrag(event, "project-frame", frame.id)} title={pendingFramePreview ? "Show extracted frame" : "Select frame, or drag to Reference"} className={`frame-thumb ${workspaceView === "frames" && index === selectedFrame ? "selected" : ""}`} onClick={() => { setSelectedFrame(index); setWorkspaceView("frames"); setFitCanvas(true); }}><span>{index + 1}</span><img draggable={false} src={frame.dataUrl} alt="" />{frame.warnings.length > 0 && <WarningCircle className="warning" />}</button>)}
+                {displayedFrames.map((frame, index) => <button key={frame.id} draggable={!pendingFramePreview} onDragStart={(event) => !pendingFramePreview && startReferenceDrag(event, "project-frame", frame.id)} title={pendingFramePreview ? "Show extracted frame" : "Select frame, or drag to Reference"} className={`frame-thumb ${workspaceView === "frames" && index === selectedFrame ? "selected" : ""}`} onClick={() => { setSelectedFrame(index); setWorkspaceView("frames"); setFitCanvas(true); }}><span>{index + 1}</span><img draggable={false} src={frame.dataUrl} className={frame.mirrored ? "mirrored" : ""} alt="" />{frame.warnings.length > 0 && <WarningCircle className="warning" />}</button>)}
               </div>
             </div>}
           </div>}

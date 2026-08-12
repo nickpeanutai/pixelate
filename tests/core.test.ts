@@ -7,6 +7,7 @@ import {
   detectPseudoPixelGrid,
   dominantPalette,
   edgeAwareDownscale,
+  estimateAnimationOutputSize,
   frameDifference,
   naiveResizeImageData,
   pixelateAnimationFrames,
@@ -29,6 +30,7 @@ import { addSourceMarker, automaticMarkerCount, createAutomaticMarkers, frameInd
 import { canvasDisplaySize, fitCanvasZoom, zoomIn, zoomOut } from "../src/canvas-view";
 import { originalFrameDrawTransform } from "../src/frame-output";
 import { buildChromaPrompt, buildVideoChromaPrompt, generatePrompt, getPromptTemplate, getPromptTemplates, resolveChromaKey } from "../src/external-prompt";
+import { deleteExtractedFrame, duplicateExtractedFrame, mirrorExtractedFrame } from "../src/extracted-frame-edit";
 import { formatStarCount, parseStarCount } from "../src/github-stars";
 
 class TestImageData {
@@ -397,21 +399,42 @@ describe("local frame and pixel processing", () => {
     expect(grid.fftConfidence).toBe(0);
   });
 
-  it("reuses an extraction-time grid for animation pixelation", () => {
+  it("reconstructs every selected animation output pixel independently", () => {
     const data = new Uint8ClampedArray(8 * 8 * 4);
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-      const light = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0;
-      data.set(light ? [230, 230, 230, 255] : [25, 25, 25, 255], (y * 8 + x) * 4);
+      const light = (Math.floor(x / 2) + Math.floor(y / 2)) % 2 === 0;
+      const color = light ? [230, 80, 60, 255] : [35, 70, 190, 255];
+      data.set(color, (y * 8 + x) * 4);
     }
-    const source = new ImageData(data, 8, 8);
-    const grid = {
-      detected: true, stepX: 4, stepY: 4, columns: 2, rows: 2, confidence: 0.8,
-      fftConfidence: 0.8, fftValid: true,
-      xBoundaries: [0, 4, 8], yBoundaries: [0, 4, 8],
-    };
-    const result = pixelateAnimationFrames([source], 2, 2, 4, [source], grid);
-    expect(result.grid).toBe(grid);
-    expect([result.frames[0].width, result.frames[0].height]).toEqual([2, 2]);
+    const result = pixelateAnimationFrames([new ImageData(data, 8, 8)], 4, 4, 4);
+    const frame = result.frames[0];
+    expect([frame.width, frame.height]).toEqual([4, 4]);
+    expect(frame.data.slice(0, 4)).not.toEqual(frame.data.slice(4, 8));
+    expect(frame.data.slice(0, 4)).toEqual(frame.data.slice(20, 24));
+    expect([...frame.data].filter((_, index) => index % 4 === 3).every((alpha) => alpha === 255)).toBe(true);
+  });
+
+  it("doubles the estimated source-art grid and selects the nearest animation preset", () => {
+    const size = 256; const step = 8; const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const light = (Math.floor(x / step) + Math.floor(y / step)) % 2 === 0;
+      data.set(light ? [230, 190, 120, 255] : [35, 55, 95, 255], (y * size + x) * 4);
+    }
+    const estimate = estimateAnimationOutputSize([new ImageData(data, size, size)], 8, [32, 64, 128, 256]);
+    expect(estimate).toMatchObject({ sourcePixelStep: 8, detectedWidth: 32, detectedHeight: 32, doubledWidth: 64, doubledHeight: 64, preset: 64, samples: 1 });
+  });
+
+  it("chooses the dominant quantized color and emits hard pixel-art alpha", () => {
+    const data = new Uint8ClampedArray(8 * 4 * 4);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 8; x++) {
+      const offset = (y * 8 + x) * 4;
+      if (x < 4) data.set(x + y < 5 ? [220, 50, 40, 255] : [30, 60, 190, 255], offset);
+      else if ((x + y) % 3 === 0) data.set([240, 210, 120, 170], offset);
+    }
+    const result = pixelateAnimationFrames([new ImageData(data, 8, 4)], 4, 2, 4);
+    expect(result.frames[0].data[3]).toBe(255);
+    expect(result.frames[0].data[(3 * 4) + 3]).toBe(0);
+    expect([...result.frames[0].data].filter((_, index) => index % 4 === 3).every((alpha) => alpha === 0 || alpha === 255)).toBe(true);
   });
 
   it("keeps a thin high-contrast feature that nearest-neighbor sampling misses", () => {
@@ -427,6 +450,24 @@ describe("local frame and pixel processing", () => {
     expect(improvedOpaque).toBeGreaterThan(naiveOpaque);
   });
 
+  it("edits an extracted preview batch before frames are applied", () => {
+    const makeExtracted = (id: string, value: number) => ({
+      frame: { id, name: `Frame ${id}`, dataUrl: `data:${id}`, durationMs: 100, offsetX: 0, offsetY: 0, mirrored: false, warnings: [], width: 1, height: 1, processing: "original" as const },
+      imageData: new ImageData(new Uint8ClampedArray([value, value, value, 255]), 1, 1),
+      timeMs: value,
+    });
+    const frames = [makeExtracted("a", 10), makeExtracted("b", 20)];
+    const duplicated = duplicateExtractedFrame(frames, 0, "copy");
+    expect(duplicated.map(({ frame }) => frame.id)).toEqual(["a", "copy", "b"]);
+    expect(duplicated[1].imageData).not.toBe(frames[0].imageData);
+    expect(duplicated[1].imageData.data).toEqual(frames[0].imageData.data);
+    const mirrored = mirrorExtractedFrame(duplicated, 1);
+    expect(mirrored[1].frame.mirrored).toBe(true);
+    expect(duplicated[1].frame.mirrored).toBe(false);
+    expect(deleteExtractedFrame(mirrored, 1).map(({ frame }) => frame.id)).toEqual(["a", "b"]);
+    expect(deleteExtractedFrame([frames[0]], 0)).toEqual([frames[0]]);
+  });
+
   it("crops transparent margins before fitting a standard output canvas", () => {
     const data = new Uint8ClampedArray(12 * 12 * 4);
     for (let y = 4; y < 8; y++) for (let x = 5; x < 7; x++) data.set([230, 210, 180, 255], (y * 12 + x) * 4);
@@ -438,7 +479,7 @@ describe("local frame and pixel processing", () => {
     expect([maxX - minX + 1, maxY - minY + 1]).toEqual([2, 4]);
   });
 
-  it("uses one union crop for animation frames so motion does not recenter per frame", () => {
+  it("preserves full-frame animation motion without recentering each frame", () => {
     const makeFrame = (left: number) => {
       const data = new Uint8ClampedArray(12 * 12 * 4);
       for (let y = 3; y < 9; y++) for (let x = left; x < left + 2; x++) data.set([240, 220, 190, 255], (y * 12 + x) * 4);

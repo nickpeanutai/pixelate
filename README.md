@@ -44,7 +44,7 @@ For example, a request for a **256 × 256 pixel-art sprite** can arrive as a **1
 | One flat color per pixel | Multiple slightly different colors inside a single apparent pixel | Internally consistent cells and a controlled palette |
 | Crisp hard edges | Antialiasing, blur, halos, and partial-coverage edge pixels | Deliberate silhouettes and preserved one-pixel details |
 | Transparent or exact chroma background | Near-magenta/green backgrounds, residue, holes, or insufficient margins | Clean alpha with predictable edge treatment |
-| Consistent animation frames | Frame-to-frame shifts in scale, position, grid phase, and color | One crop, lattice, scale, and palette for the sequence |
+| Consistent animation frames | Frame-to-frame shifts in scale, position, grid phase, and color | One fixed full-frame output grid and one palette for the sequence |
 
 Simple resizing does not solve these problems. It can preserve the false lattice, miss thin features, flatten outlines, and amplify noisy colors. Pixelate instead detects the apparent grid, validates it, aligns one rigid lattice, samples edges deliberately, removes controlled chroma backgrounds, and quantizes the result into a stable palette.
 
@@ -56,7 +56,7 @@ Simple resizing does not solve these problems. It can preserve the false lattice
 | **Local-first by design** | Media processing happens in the browser. Project metadata uses IndexedDB, while source media uses OPFS when available. |
 | **Pixel-grid recovery** | FFT-based grid detection with a Sobel-gradient fallback recovers the underlying pixel lattice from enlarged or softened source art. |
 | **Controlled transparency** | Validate and remove solid magenta or green backgrounds with edge-aware chroma matting, despill, and focused diagnostics. |
-| **Stable animation output** | Extract selected video frames, lock one grid across the sequence, and apply a shared palette to reduce spatial jitter and color flicker. |
+| **Stable animation output** | Estimate the quantized source-pixel scale, recommend the nearest preset, then reconstruct every selected output pixel with robust shared-palette and temporal shade stabilization—without unreliable video FFT detection. |
 | **Deterministic color** | Alpha- and contrast-weighted palette construction preserves outlines, highlights, and small details without inventing new content. |
 | **Game-ready export** | Download processed images and animation sprite sheets with predictable source-based filenames and frame dimensions. |
 
@@ -73,17 +73,8 @@ Simple resizing does not solve these problems. It can preserve the false lattice
 Pixelate uses a non-neural, browser-local pipeline designed to preserve deliberate pixel structure:
 
 ```text
-Source media
-    ↓
-Chroma validation and removal
-    ↓
-FFT grid proposal → PerfectPixel validation → Sobel fallback
-    ↓
-Rigid lattice alignment and edge-aware downscaling
-    ↓
-Perceptual palette generation and quantization
-    ↓
-PNG or sprite-sheet export
+Still image: chroma removal → FFT/Sobel grid recovery → edge-aware sampling → palette → PNG
+Animation:   chroma removal → quantized step estimate → true-resolution reconstruction → temporal palette stabilization → sprite sheet
 ```
 
 The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image and compares a naïve nearest-neighbor pixelation baseline with Pixelate's optimized result. Both use the same transparent content crop, 256 × 256 canvas, and exact 24-color palette, isolating the spatial image-quality difference.
@@ -101,6 +92,14 @@ Read the full rationale and reproduction steps in [Pixel-art processing pipeline
 ## Animation workspace
 
 The animation workflow is built around deliberate source-frame selection:
+
+<div align="center">
+  <p><strong>Original video frames vs. Pixelate extraction</strong></p>
+  <p>Original 960 × 960 frames (coral) · Pixelate 256 × 256 frames (teal)</p>
+  <img src="docs/comparisons/animation-source-vs-pixelate.gif" width="552" alt="Animated side-by-side comparison of original magenta-keyed video frames and Pixelate's transparent 256 by 256 extracted frames" />
+</div>
+
+The synchronized preview shows the same 11-frame motion at equal display size. Pixelate removes the controlled chroma background, reconstructs a true 256 × 256 grid, and stabilizes a shared 24-color palette while retaining the original framing and motion.
 
 - Set a persisted start and end range directly on the video timeline.
 - Auto-select evenly spaced frames with an independent extraction FPS.

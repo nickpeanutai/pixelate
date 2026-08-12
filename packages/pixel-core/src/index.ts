@@ -10,11 +10,13 @@ export {
   derivePerceptualPalette,
   detectPseudoPixelGrid,
   edgeAwareDownscale,
+  estimateAnimationOutputSize,
   naiveResizeImageData,
   pixelateAnimationFrames,
   pixelateImageData,
   type PixelArtProcessOptions,
   type PixelArtProcessResult,
+  type AnimationSizeEstimate,
   type PixelGridDetection,
   type RGB,
 } from "./pixel-art";

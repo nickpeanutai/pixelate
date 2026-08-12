@@ -26,9 +26,17 @@ The browser-local optimized path is:
    preserve thin details.
 4. Build a deterministic, alpha- and contrast-weighted palette with
    PCA-divisive initialization and weighted k-means refinement.
-5. For animations, infer one locked grid and aligned boundary map from the
-   untouched first frame, then apply them and one shared palette to the sequence
-   to reduce spatial jitter and color flicker.
+5. Animations intentionally use a separate fixed-grid path. After chroma
+   removal, quantize representative frames and estimate their apparent source-
+   pixel step from median gradient-peak spacing. Double the inferred art grid
+   and recommend the nearest 32×32, 64×64, 128×128, or 256×256 preset. Then
+   derive one shared palette across the extracted batch and reconstruct every
+   pixel of the selected logical resolution on a rigid full-frame grid. Low-
+   variance cells use a robust median; mixed cells use deterministic two-cluster
+   majority sampling before shared-palette mapping. Conservative temporal
+   hysteresis suppresses ambiguous switches between nearby shades. This bypasses
+   FFT/Sobel detection on compressed video while preserving detail, framing,
+   and manual control.
 
 This is deliberately a non-neural pipeline: it is deterministic, works fully
 in the browser, and does not invent new sprite details.
@@ -66,7 +74,12 @@ algorithm can be reviewed visually instead of relying only on unit tests.
 - PixelOE informed contrast-aware detail preservation and stable center
   sampling.
 - pixelize informed PCA-divisive palette initialization and weighted k-means.
-- proper-pixel-art informed shared grid and shared-palette animation handling.
+- proper-pixel-art informed consistent animation framing and shared-palette handling.
+- PerfectPixel informed robust median/majority cell sampling. Its independent
+  grid-line refinement is intentionally not used for animation because it can
+  jitter, and export scaling is kept separate from logical output resolution.
+- Sprite Fusion Pixel Snapper informed pre-quantized gradient-peak spacing,
+  fixed uniform cuts, and dominant-cell sampling for animation output.
 - BetterPixelArtDownscale informed the high-level use of exact area overlap and
   alpha-aware edge preservation. Because no standalone license was present in
   the inspected checkout, no source code was copied from that project.
