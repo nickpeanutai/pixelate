@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PNG } from "pngjs";
 import {
-  legacyPixelateImageData,
+  naivePixelateImageData,
   pixelateImageData,
   removeChromaBackground,
   type PixelGridDetection,
@@ -61,9 +61,9 @@ function contactSheet(left: ImageData, right: ImageData) {
       output.data.set(source.data.subarray(sourceOffset, sourceOffset + 4), targetOffset);
     }
   };
-  // Red = legacy, teal = optimized. The standalone images use explicit names.
+  // Amber = naive baseline, teal = Pixelate. The standalone images use explicit names.
   for (let y = 0; y < bar; y++) {
-    for (let x = 0; x < left.width; x++) output.data.set([181, 66, 79, 255], (y * output.width + x) * 4);
+    for (let x = 0; x < left.width; x++) output.data.set([210, 157, 78, 255], (y * output.width + x) * 4);
     for (let x = left.width + gap; x < output.width; x++) output.data.set([78, 215, 201, 255], (y * output.width + x) * 4);
   }
   paste(left, 0); paste(right, left.width + gap);
@@ -110,14 +110,14 @@ const prepared = prepareSource(decoded);
 const input = prepared.image;
 console.log(`Input preprocessing: ${prepared.background}`);
 
-for (const target of [64, 128]) {
-  const legacy = legacyPixelateImageData(input, target, target, 24);
+for (const target of [64, 128, 256]) {
+  const naive = naivePixelateImageData(input, target, target, 24);
   const optimized = pixelateImageData(input, target, target, 24);
   const optimizedUnquantized = pixelateImageData(input, target, target, 24, { quantize: false });
-  writePng(resolve(outputDir, `legacy-${target}.png`), legacy);
+  writePng(resolve(outputDir, `naive-${target}.png`), naive);
   writePng(resolve(outputDir, `optimized-unquantized-${target}.png`), optimizedUnquantized.imageData);
   writePng(resolve(outputDir, `optimized-${target}.png`), optimized.imageData);
   const scale = Math.max(1, Math.floor(512 / target));
-  writePng(resolve(outputDir, `comparison-${target}.png`), contactSheet(preview(legacy, scale), preview(optimized.imageData, scale)));
+  writePng(resolve(outputDir, `comparison-${target}.png`), contactSheet(preview(naive, scale), preview(optimized.imageData, scale)));
   console.log(`${target}x${target}: ${describeGrid(optimized.grid)}; ${optimized.palette.length} colors`);
 }

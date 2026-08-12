@@ -1,13 +1,12 @@
 # Pixel-art processing pipeline
 
-## Why the pipeline changed
+## Why this pipeline
 
-The original implementation resized the source with nearest-neighbour sampling,
-kept the 24 most frequent 4-bit RGB buckets, and mapped every output pixel to
-the nearest bucket. It was deterministic and fast, but it could lose thin
-outlines, eyes, weapon edges, and rare highlight colors. Enlarged AI-generated
-"pixel art" also kept its false sub-pixel texture instead of recovering a
-stable source grid.
+A naïve pixelation approach resizes the source with nearest-neighbour sampling,
+keeps the most frequent RGB buckets, and maps every output pixel to the nearest
+bucket. It is deterministic and fast, but can lose thin outlines, eyes, weapon
+edges, and rare highlight colors. Enlarged AI-generated "pixel art" can also
+retain false sub-pixel texture instead of recovering a stable source grid.
 
 ## Optimized pipeline
 
@@ -50,11 +49,11 @@ Run:
 pnpm compare:pixels
 ```
 
-The command processes `public/assets/demo-alchemist.png` through the original
-and optimized implementations at 64×64 and 128×128. Standalone outputs and
+The command processes `public/assets/demo-alchemist.png` through a naïve
+nearest-neighbor baseline and Pixelate at 64×64, 128×128, and 256×256. Standalone outputs and
 side-by-side contact sheets are written to
-`docs/comparisons/pixel-pipeline/`. In contact sheets, red identifies the
-original pipeline and teal identifies the optimized pipeline.
+`docs/comparisons/pixel-pipeline/`. In contact sheets, amber identifies the
+naïve baseline and teal identifies Pixelate.
 
 The comparison is intentionally retained in the repository so changes to the
 algorithm can be reviewed visually instead of relying only on unit tests.

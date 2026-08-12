@@ -817,7 +817,7 @@ export function pixelateAnimationFrames(frames: ImageData[], width: number, heig
   return { frames: resized.map((frame) => applyPerceptualPalette(frame, palette)), palette, grid: detectedGrid.detected ? detectedGrid : undefined };
 }
 
-export function legacyPalette(frames: ImageData[], maxColors: number): RGB[] {
+export function naivePalette(frames: ImageData[], maxColors: number): RGB[] {
   const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
   const step = Math.max(1, Math.floor(Math.sqrt(frames.reduce((sum, frame) => sum + frame.width * frame.height, 0) / 20_000)));
   for (const frame of frames) for (let y = 0; y < frame.height; y += step) for (let x = 0; x < frame.width; x += step) {
@@ -830,7 +830,7 @@ export function legacyPalette(frames: ImageData[], maxColors: number): RGB[] {
   return [...buckets.values()].sort((a, b) => b.count - a.count).slice(0, Math.max(2, maxColors)).map(({ r, g, b }) => [r + 8, g + 8, b + 8]);
 }
 
-export function legacyApplyPalette(source: ImageData, palette: RGB[]) {
+export function naiveApplyPalette(source: ImageData, palette: RGB[]) {
   const output = new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
   for (let offset = 0; offset < output.data.length; offset += 4) {
     if (output.data[offset + 3] < 16 || !palette.length) continue;
@@ -844,9 +844,10 @@ export function legacyApplyPalette(source: ImageData, palette: RGB[]) {
   return output;
 }
 
-export function legacyPixelateImageData(source: ImageData, width: number, height: number, paletteSize = 24) {
-  const scale = Math.min(width / source.width, height / source.height);
-  const drawWidth = Math.max(1, Math.round(source.width * scale)); const drawHeight = Math.max(1, Math.round(source.height * scale));
-  const fitted = pasteCentered(nearestResize(source, drawWidth, drawHeight), width, height);
-  return legacyApplyPalette(fitted, legacyPalette([fitted], paletteSize));
+export function naivePixelateImageData(source: ImageData, width: number, height: number, paletteSize = 24) {
+  const cropped = cropPixelArt(source, sharedContentBounds([source]));
+  const scale = Math.min(width / cropped.width, height / cropped.height);
+  const drawWidth = Math.max(1, Math.round(cropped.width * scale)); const drawHeight = Math.max(1, Math.round(cropped.height * scale));
+  const fitted = pasteCentered(nearestResize(cropped, drawWidth, drawHeight), width, height);
+  return naiveApplyPalette(fitted, naivePalette([fitted], paletteSize));
 }

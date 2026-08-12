@@ -8,7 +8,7 @@ import {
   dominantPalette,
   edgeAwareDownscale,
   frameDifference,
-  legacyPixelateImageData,
+  naivePixelateImageData,
   pixelateAnimationFrames,
   pixelateImageData,
   prepareExternalVideoReference,
@@ -416,13 +416,15 @@ describe("local frame and pixel processing", () => {
 
   it("keeps a thin high-contrast feature that nearest-neighbor sampling misses", () => {
     const data = new Uint8ClampedArray(8 * 8 * 4);
+    data.set([20, 20, 20, 255], 0);
+    data.set([20, 20, 20, 255], (8 * 8 - 1) * 4);
     for (let y = 1; y < 7; y++) data.set([245, 245, 245, 255], (y * 8 + 3) * 4);
     const source = new ImageData(data, 8, 8);
-    const legacy = legacyPixelateImageData(source, 2, 2, 4);
+    const naive = naivePixelateImageData(source, 2, 2, 4);
     const improved = edgeAwareDownscale(source, 2, 2);
-    const legacyOpaque = [...legacy.data].filter((_, index) => index % 4 === 3 && legacy.data[index] > 0).length;
+    const naiveOpaque = [...naive.data].filter((_, index) => index % 4 === 3 && naive.data[index] > 0).length;
     const improvedOpaque = [...improved.data].filter((_, index) => index % 4 === 3 && improved.data[index] > 0).length;
-    expect(improvedOpaque).toBeGreaterThan(legacyOpaque);
+    expect(improvedOpaque).toBeGreaterThan(naiveOpaque);
   });
 
   it("crops transparent margins before fitting a standard output canvas", () => {

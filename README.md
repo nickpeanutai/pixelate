@@ -66,13 +66,14 @@ Perceptual palette generation and quantization
 PNG or sprite-sheet export
 ```
 
-The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image; the comparison shows the legacy result in red and the optimized result in teal.
+The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image and compares a naïve nearest-neighbor pixelation baseline with Pixelate's optimized result. Both use the same transparent content crop, 256 × 256 canvas, and 24-color limit.
 
 <div align="center">
   <p><strong>Example source</strong></p>
   <img src="public/assets/demo-alchemist.png" width="420" alt="Magenta-keyed pixel-art mage source image" />
-  <p><strong>128 × 128 output comparison</strong></p>
-  <img src="docs/comparisons/pixel-pipeline/comparison-128.png" alt="Legacy and optimized pixel-processing comparison" />
+  <p><strong>256 × 256 output comparison</strong></p>
+  <p>Naïve baseline (amber) · Pixelate (teal)</p>
+  <img src="docs/comparisons/pixel-pipeline/comparison-256.png" alt="Naive nearest-neighbor baseline and Pixelate 256 × 256 comparison" />
 </div>
 
 Read the full rationale and reproduction steps in [Pixel-art processing pipeline](docs/pixel-processing.md).
@@ -123,7 +124,7 @@ The verification suite runs TypeScript checks, unit tests, and a production buil
 | `pnpm preview` | Preview the production build locally. |
 | `pnpm test` | Run the Vitest test suite. |
 | `pnpm check` | Run type checking, tests, and the production build. |
-| `pnpm compare:pixels` | Regenerate the legacy-versus-optimized pixel-pipeline fixtures. |
+| `pnpm compare:pixels` | Regenerate the naïve-baseline-versus-Pixelate comparison fixtures. |
 | `pnpm deploy:cloudflare:dry-run` | Validate the Cloudflare Worker bundle without deploying. |
 | `pnpm deploy:cloudflare` | Build and deploy with Wrangler. |
 
