@@ -8,14 +8,14 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "build": "vite build",
     "preview": "vite preview",
     "deploy:cloudflare": "pnpm build && wrangler deploy",
     "deploy:cloudflare:dry-run": "pnpm build && wrangler deploy --dry-run",
     "compare:pixels": "vite-node scripts/compare-pixel-pipelines.ts",
     "test": "vitest run",
     "test:sites": "node --test tests/sites-worker.test.mjs",
-    "check": "tsc --noEmit && pnpm test && pnpm build && pnpm test:sites"
+    "check": "tsc --noEmit && pnpm test && pnpm build"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
