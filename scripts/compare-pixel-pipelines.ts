@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PNG } from "pngjs";
 import {
-  naivePixelateImageData,
+  applyPerceptualPalette,
+  naiveResizeImageData,
   pixelateImageData,
   removeChromaBackground,
   type PixelGridDetection,
@@ -111,13 +112,13 @@ const input = prepared.image;
 console.log(`Input preprocessing: ${prepared.background}`);
 
 for (const target of [64, 128, 256]) {
-  const naive = naivePixelateImageData(input, target, target, 24);
   const optimized = pixelateImageData(input, target, target, 24);
+  const naive = applyPerceptualPalette(naiveResizeImageData(input, target, target), optimized.palette);
   const optimizedUnquantized = pixelateImageData(input, target, target, 24, { quantize: false });
   writePng(resolve(outputDir, `naive-${target}.png`), naive);
   writePng(resolve(outputDir, `optimized-unquantized-${target}.png`), optimizedUnquantized.imageData);
   writePng(resolve(outputDir, `optimized-${target}.png`), optimized.imageData);
   const scale = Math.max(1, Math.floor(512 / target));
   writePng(resolve(outputDir, `comparison-${target}.png`), contactSheet(preview(naive, scale), preview(optimized.imageData, scale)));
-  console.log(`${target}x${target}: ${describeGrid(optimized.grid)}; ${optimized.palette.length} colors`);
+  console.log(`${target}x${target}: ${describeGrid(optimized.grid)}; shared ${optimized.palette.length}-color palette`);
 }

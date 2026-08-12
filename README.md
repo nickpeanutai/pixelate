@@ -31,6 +31,26 @@ Pixelate fills the gap between image or video generation and a usable game asset
 
 No model API, provider account, or server-side media pipeline is required. Source files and project data stay on your device.
 
+## The problem: pixel-styled is not pixel-accurate
+
+State-of-the-art generators such as GPT Image 2, Nano Banana 2, Imagen 2, and similar models can create convincing *pixel-art-looking* images, but they are general-purpose image models—not deterministic sprite renderers. A prompt can describe the right style and dimensions while the returned raster still violates the structural constraints a game asset needs.
+
+For example, a request for a **256 × 256 pixel-art sprite** can arrive as a **1254 × 1254 image** containing an enlarged, irregular pseudo-pixel lattice. In the example below, the apparent grid is roughly **318 × 308** with low confidence—not the requested 256 × 256 native grid.
+
+| Requested | A generator may return | A production asset needs |
+| --- | --- | --- |
+| Exact 256 × 256 pixel art | A larger raster that only *looks* like 256 × 256 pixel art | Exactly 256 × 256 intentional output cells |
+| Uniform square pixels | Uneven cell widths, inconsistent spacing, or a warped lattice | One stable, aligned grid across the sprite |
+| One flat color per pixel | Multiple slightly different colors inside a single apparent pixel | Internally consistent cells and a controlled palette |
+| Crisp hard edges | Antialiasing, blur, halos, and partial-coverage edge pixels | Deliberate silhouettes and preserved one-pixel details |
+| Transparent or exact chroma background | Near-magenta/green backgrounds, residue, holes, or insufficient margins | Clean alpha with predictable edge treatment |
+| Consistent animation frames | Frame-to-frame shifts in scale, position, grid phase, and color | One crop, lattice, scale, and palette for the sequence |
+
+Simple resizing does not solve these problems. It can preserve the false lattice, miss thin features, flatten outlines, and amplify noisy colors. Pixelate instead detects the apparent grid, validates it, aligns one rigid lattice, samples edges deliberately, removes controlled chroma backgrounds, and quantizes the result into a stable palette.
+
+> [!NOTE]
+> Pixelate corrects raster structure; it does not redraw the subject. Semantic generation mistakes—incorrect anatomy, missing props, malformed objects, or the wrong pose—must be corrected in the source generator before import.
+
 | | |
 | --- | --- |
 | **Local-first by design** | Media processing happens in the browser. Project metadata uses IndexedDB, while source media uses OPFS when available. |
@@ -66,7 +86,7 @@ Perceptual palette generation and quantization
 PNG or sprite-sheet export
 ```
 
-The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image and compares a naïve nearest-neighbor pixelation baseline with Pixelate's optimized result. Both use the same transparent content crop, 256 × 256 canvas, and 24-color limit.
+The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image and compares a naïve nearest-neighbor pixelation baseline with Pixelate's optimized result. Both use the same transparent content crop, 256 × 256 canvas, and exact 24-color palette, isolating the spatial image-quality difference.
 
 <div align="center">
   <p><strong>Example source</strong></p>

@@ -2,11 +2,10 @@
 
 ## Why this pipeline
 
-A naïve pixelation approach resizes the source with nearest-neighbour sampling,
-keeps the most frequent RGB buckets, and maps every output pixel to the nearest
-bucket. It is deterministic and fast, but can lose thin outlines, eyes, weapon
-edges, and rare highlight colors. Enlarged AI-generated "pixel art" can also
-retain false sub-pixel texture instead of recovering a stable source grid.
+A naïve pixelation approach resizes the source with nearest-neighbour sampling.
+It is deterministic and fast, but can lose thin outlines, eyes, weapon edges,
+and rare highlights. Enlarged AI-generated "pixel art" can also retain false
+sub-pixel texture instead of recovering a stable source grid.
 
 ## Optimized pipeline
 
@@ -50,7 +49,9 @@ pnpm compare:pixels
 ```
 
 The command processes `public/assets/demo-alchemist.png` through a naïve
-nearest-neighbor baseline and Pixelate at 64×64, 128×128, and 256×256. Standalone outputs and
+nearest-neighbor baseline and Pixelate at 64×64, 128×128, and 256×256. Both
+results use the exact palette derived by Pixelate, so the comparison isolates
+spatial reconstruction quality. Standalone outputs and
 side-by-side contact sheets are written to
 `docs/comparisons/pixel-pipeline/`. In contact sheets, amber identifies the
 naïve baseline and teal identifies Pixelate.

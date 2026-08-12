@@ -8,7 +8,7 @@ import {
   dominantPalette,
   edgeAwareDownscale,
   frameDifference,
-  naivePixelateImageData,
+  naiveResizeImageData,
   pixelateAnimationFrames,
   pixelateImageData,
   prepareExternalVideoReference,
@@ -420,7 +420,7 @@ describe("local frame and pixel processing", () => {
     data.set([20, 20, 20, 255], (8 * 8 - 1) * 4);
     for (let y = 1; y < 7; y++) data.set([245, 245, 245, 255], (y * 8 + 3) * 4);
     const source = new ImageData(data, 8, 8);
-    const naive = naivePixelateImageData(source, 2, 2, 4);
+    const naive = naiveResizeImageData(source, 2, 2);
     const improved = edgeAwareDownscale(source, 2, 2);
     const naiveOpaque = [...naive.data].filter((_, index) => index % 4 === 3 && naive.data[index] > 0).length;
     const improvedOpaque = [...improved.data].filter((_, index) => index % 4 === 3 && improved.data[index] > 0).length;
