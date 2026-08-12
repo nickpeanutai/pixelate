@@ -1,32 +1,163 @@
-# Pixelate
+<div align="center">
+  <img src="public/assets/b-avatar.jpg" width="104" height="104" alt="Pixelate logo" />
 
-Pixelate is a local-first browser workbench for turning externally
-generated images and videos into game-ready pixel assets.
+  <h1>Pixelate</h1>
+
+  <p><strong>A local-first pixel image and sprite animation workbench.</strong></p>
+  <p>Turn externally generated images and videos into clean, consistent, game-ready pixel assets—directly in your browser.</p>
+
+  <p>
+    <a href="https://pixelate.nickpeanut.com"><img src="https://img.shields.io/badge/Launch-Pixelate-6EE7D6?style=for-the-badge&logo=cloudflare&logoColor=10131A" alt="Launch Pixelate" /></a>
+    <a href="https://github.com/nickpeanutai/pixelate/stargazers"><img src="https://img.shields.io/github/stars/nickpeanutai/pixelate?style=for-the-badge&logo=github&color=2D3748" alt="GitHub stars" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/nickpeanutai/pixelate?style=for-the-badge&color=2D3748" alt="MIT License" /></a>
+  </p>
+
+  <p>
+    <a href="https://pixelate.nickpeanut.com">Open the app</a>
+    ·
+    <a href="#quick-start">Run locally</a>
+    ·
+    <a href="docs/pixel-processing.md">Pixel pipeline</a>
+    ·
+    <a href="docs/architecture.md">Architecture</a>
+  </p>
+</div>
+
+---
+
+## From generated media to production-ready pixels
+
+Pixelate fills the gap between image or video generation and a usable game asset. Build a controlled prompt, generate media with the tool of your choice, then import the untouched result for deterministic processing, frame selection, preview, and export.
+
+No model API, provider account, or server-side media pipeline is required. Source files and project data stay on your device.
+
+| | |
+| --- | --- |
+| **Local-first by design** | Media processing happens in the browser. Project metadata uses IndexedDB, while source media uses OPFS when available. |
+| **Pixel-grid recovery** | FFT-based grid detection with a Sobel-gradient fallback recovers the underlying pixel lattice from enlarged or softened source art. |
+| **Controlled transparency** | Validate and remove solid magenta or green backgrounds with edge-aware chroma matting, despill, and focused diagnostics. |
+| **Stable animation output** | Extract selected video frames, lock one grid across the sequence, and apply a shared palette to reduce spatial jitter and color flicker. |
+| **Deterministic color** | Alpha- and contrast-weighted palette construction preserves outlines, highlights, and small details without inventing new content. |
+| **Game-ready export** | Download processed images and animation sprite sheets with predictable source-based filenames and frame dimensions. |
 
 ## Workflow
 
-1. Choose a built-in image or video prompt template.
-2. Describe the subject or action in Chinese or English.
-3. Generate and copy the complete prompt.
-4. Create the image or video with the external tool of your choice.
-5. Import the untouched result for local chroma removal, pixel processing,
-   manual frame selection, animation preview, and export.
+1. **Build a prompt** — choose an image or animation template and describe the subject in Chinese or English.
+2. **Generate externally** — copy the completed prompt into the image or video tool you already use.
+3. **Import the source** — bring the untouched image or video into Pixelate; uploads are not sent to a remote service.
+4. **Refine the asset** — remove a controlled chroma background, recover the pixel grid, choose output size and palette, or select exact video frames.
+5. **Export for your game** — download a processed PNG or an animation sprite sheet.
 
-Uploaded media and processing stay in the browser. The app does not connect to
-image or video generation services.
+## Pixel-processing pipeline
 
-## Development
+Pixelate uses a non-neural, browser-local pipeline designed to preserve deliberate pixel structure:
+
+```text
+Source media
+    ↓
+Chroma validation and removal
+    ↓
+FFT grid proposal → PerfectPixel validation → Sobel fallback
+    ↓
+Rigid lattice alignment and edge-aware downscaling
+    ↓
+Perceptual palette generation and quantization
+    ↓
+PNG or sprite-sheet export
+```
+
+The repository keeps visual regression fixtures for reviewing algorithm changes. Red identifies the legacy pipeline; teal identifies the optimized pipeline.
+
+![Legacy and optimized pixel-processing comparison](docs/comparisons/pixel-pipeline/comparison-128.png)
+
+Read the full rationale and reproduction steps in [Pixel-art processing pipeline](docs/pixel-processing.md).
+
+## Animation workspace
+
+The animation workflow is built around deliberate source-frame selection:
+
+- Set a persisted start and end range directly on the video timeline.
+- Auto-select evenly spaced frames with an independent extraction FPS.
+- Add, move, preview, or remove individual source markers.
+- Inspect untouched extracted frames before applying any processing.
+- Keep original frames or process them through the shared pixel-art pipeline.
+- Reopen the extracted-frame drawer to reprocess the original batch at any time.
+
+## Quick start
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/)
+- [pnpm](https://pnpm.io/)
+
+### Local development
 
 ```bash
+git clone https://github.com/nickpeanutai/pixelate.git
+cd pixelate
 pnpm install
 pnpm dev
 ```
 
-Run the complete verification suite with:
+Vite will print the local development URL in your terminal.
+
+### Verification
 
 ```bash
 pnpm check
 ```
 
-The project is released under the MIT License. See
-`THIRD_PARTY_NOTICES.md` for third-party attributions.
+The verification suite runs TypeScript checks, unit tests, and a production build.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Start the Vite development server. |
+| `pnpm build` | Create the production client build in `dist/client`. |
+| `pnpm preview` | Preview the production build locally. |
+| `pnpm test` | Run the Vitest test suite. |
+| `pnpm check` | Run type checking, tests, and the production build. |
+| `pnpm compare:pixels` | Regenerate the legacy-versus-optimized pixel-pipeline fixtures. |
+| `pnpm deploy:cloudflare:dry-run` | Validate the Cloudflare Worker bundle without deploying. |
+| `pnpm deploy:cloudflare` | Build and deploy with Wrangler. |
+
+## Architecture
+
+Pixelate is a pnpm workspace with small, focused modules:
+
+| Module | Responsibility |
+| --- | --- |
+| `src/` | React application, image workflow, animation workspace, canvas, and frame-selection UI. |
+| `packages/pixel-core` | Chroma processing, grid detection, downscaling, palette generation, and frame processing. |
+| `packages/project-schema` | Project migrations, IndexedDB metadata, and OPFS source-media persistence. |
+| `packages/editor-core` | Non-destructive frame history with undo and redo. |
+| `packages/export-core` | PNG composition, sprite sheets, manifests, bundles, GIF, and APNG encoders. |
+| `worker/` | Cloudflare Worker routing, HTTPS redirects, static assets, and SPA fallback behavior. |
+
+For implementation details, see [Architecture](docs/architecture.md).
+
+## Privacy model
+
+> Pixelate does not upload imported media or connect to image and video generation services. Processing runs locally, and persistent project data remains in browser-managed storage.
+
+Network access is limited to ordinary application delivery and the optional GitHub star-count request shown in the header.
+
+## Contributing
+
+Issues and pull requests are welcome. Before submitting a change:
+
+```bash
+pnpm check
+pnpm deploy:cloudflare:dry-run
+```
+
+Changes to the pixel-processing algorithm should also regenerate and review the comparison fixtures:
+
+```bash
+pnpm compare:pixels
+```
+
+## License
+
+Pixelate is available under the [MIT License](LICENSE). Third-party licenses, research references, and attribution details are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
