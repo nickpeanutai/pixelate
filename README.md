@@ -66,9 +66,14 @@ Perceptual palette generation and quantization
 PNG or sprite-sheet export
 ```
 
-The repository keeps visual regression fixtures for reviewing algorithm changes. Red identifies the legacy pipeline; teal identifies the optimized pipeline.
+The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image; the comparison shows the legacy result in red and the optimized result in teal.
 
-![Legacy and optimized pixel-processing comparison](docs/comparisons/pixel-pipeline/comparison-128.png)
+<div align="center">
+  <p><strong>Example source</strong></p>
+  <img src="public/assets/demo-alchemist.png" width="420" alt="Magenta-keyed pixel-art mage source image" />
+  <p><strong>128 × 128 output comparison</strong></p>
+  <img src="docs/comparisons/pixel-pipeline/comparison-128.png" alt="Legacy and optimized pixel-processing comparison" />
+</div>
 
 Read the full rationale and reproduction steps in [Pixel-art processing pipeline](docs/pixel-processing.md).
 
