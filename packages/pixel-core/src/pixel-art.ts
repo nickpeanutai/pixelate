@@ -858,10 +858,21 @@ function fitPixelArt(source: ImageData, width: number, height: number) {
   return pasteCentered(resized, width, height);
 }
 
-function recoverPixelArtSource(source: ImageData, grid: PixelGridDetection, recoverGrid: boolean) {
-  if (!recoverGrid || !grid.detected) return { imageData: source, gridRecovered: false };
+function recoverPixelArtSource(source: ImageData, grid: PixelGridDetection, recoverGrid: boolean, targetWidth: number, targetHeight: number) {
+  // A weak FFT proposal can satisfy the geometric cell-size checks while
+  // actually locking onto character features instead of the source lattice.
+  // Keep the proposal available for diagnostics, but do not let it rewrite
+  // facial features or other small details. A validated Sobel fallback has no
+  // comparable FFT score, so it remains eligible for recovery.
+  const trustworthyGrid = grid.gradientFallbackUsed || grid.confidence >= 0.1;
   const alignedColumns = grid.alignedColumns ?? (grid.xBoundaries?.length ? Math.max(1, grid.xBoundaries.length - 1) : grid.columns);
   const alignedRows = grid.alignedRows ?? (grid.yBoundaries?.length ? Math.max(1, grid.yBoundaries.length - 1) : grid.rows);
+  // When the detected native grid is finer than the requested output, grid
+  // recovery would create an unnecessary intermediate and then resample it a
+  // second time. Downscale the original source directly so eyes and other
+  // one-pixel features are sampled only once.
+  const targetCanRepresentGrid = alignedColumns <= targetWidth && alignedRows <= targetHeight;
+  if (!recoverGrid || !grid.detected || !trustworthyGrid || !targetCanRepresentGrid) return { imageData: source, gridRecovered: false };
   const recovered = edgeAwareDownscale(source, alignedColumns, alignedRows, { x: grid.xBoundaries, y: grid.yBoundaries });
   return { imageData: applyPerfectPixelSquareAdjustment(recovered, grid.squareAdjustment), gridRecovered: true };
 }
@@ -869,9 +880,10 @@ function recoverPixelArtSource(source: ImageData, grid: PixelGridDetection, reco
 export function pixelateImageData(source: ImageData, width: number, height: number, paletteSize = 24, options: PixelArtProcessOptions = {}): PixelArtProcessResult {
   const recoverGrid = options.recoverGrid !== false;
   const grid = options.gridHint || detectPseudoPixelGrid(source);
-  const recovered = recoverPixelArtSource(source, grid, recoverGrid);
+  const outputWidth = Math.max(1, Math.round(width)); const outputHeight = Math.max(1, Math.round(height));
+  const recovered = recoverPixelArtSource(source, grid, recoverGrid, outputWidth, outputHeight);
   const cropped = cropPixelArt(recovered.imageData, sharedContentBounds([recovered.imageData]));
-  let imageData = fitPixelArt(cropped, Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+  let imageData = fitPixelArt(cropped, outputWidth, outputHeight);
   const palette = options.quantize === false ? [] : derivePerceptualPalette([imageData], paletteSize);
   if (palette.length) imageData = applyPerceptualPalette(imageData, palette);
   return { imageData, grid, gridRecovered: recovered.gridRecovered, palette };

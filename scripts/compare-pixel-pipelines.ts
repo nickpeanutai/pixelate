@@ -2,8 +2,6 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PNG } from "pngjs";
 import {
-  applyPerceptualPalette,
-  naiveResizeImageData,
   pixelateImageData,
   removeChromaBackground,
   type PixelGridDetection,
@@ -51,6 +49,17 @@ function preview(image: ImageData, scale: number) {
   return output;
 }
 
+function originalPreview(image: ImageData, size: number) {
+  const output = new ImageData(new Uint8ClampedArray(size * size * 4), size, size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const sourceX = Math.min(image.width - 1, Math.floor((x + 0.5) * image.width / size));
+    const sourceY = Math.min(image.height - 1, Math.floor((y + 0.5) * image.height / size));
+    const sourceOffset = (sourceY * image.width + sourceX) * 4;
+    output.data.set(image.data.subarray(sourceOffset, sourceOffset + 4), (y * size + x) * 4);
+  }
+  return output;
+}
+
 function contactSheet(left: ImageData, right: ImageData) {
   const gap = 24; const bar = 14;
   const output = new ImageData(new Uint8ClampedArray((left.width * 2 + gap) * (left.height + bar) * 4), left.width * 2 + gap, left.height + bar);
@@ -62,18 +71,18 @@ function contactSheet(left: ImageData, right: ImageData) {
       output.data.set(source.data.subarray(sourceOffset, sourceOffset + 4), targetOffset);
     }
   };
-  // Amber = naive baseline, teal = Pixelate. The standalone images use explicit names.
+  // Coral = exact original source, teal = Pixelate extraction.
   for (let y = 0; y < bar; y++) {
-    for (let x = 0; x < left.width; x++) output.data.set([210, 157, 78, 255], (y * output.width + x) * 4);
+    for (let x = 0; x < left.width; x++) output.data.set([209, 77, 100, 255], (y * output.width + x) * 4);
     for (let x = left.width + gap; x < output.width; x++) output.data.set([78, 215, 201, 255], (y * output.width + x) * 4);
   }
   paste(left, 0); paste(right, left.width + gap);
   return output;
 }
 
-function describeGrid(grid: PixelGridDetection) {
+function describeGrid(grid: PixelGridDetection, recovered: boolean) {
   return grid.detected
-    ? `${grid.columns}x${grid.rows} native grid, ${Math.round(grid.confidence * 100)}% confidence`
+    ? `${grid.columns}x${grid.rows} grid candidate, ${Math.round(grid.confidence * 100)}% confidence, ${recovered ? "recovered" : "skipped"}`
     : `no safe grid recovery (${Math.round(grid.confidence * 100)}% confidence; candidate ${grid.stepX.toFixed(2)}×${grid.stepY.toFixed(2)}px)`;
 }
 
@@ -113,12 +122,10 @@ console.log(`Input preprocessing: ${prepared.background}`);
 
 for (const target of [64, 128, 256]) {
   const optimized = pixelateImageData(input, target, target, 24);
-  const naive = applyPerceptualPalette(naiveResizeImageData(input, target, target), optimized.palette);
   const optimizedUnquantized = pixelateImageData(input, target, target, 24, { quantize: false });
-  writePng(resolve(outputDir, `naive-${target}.png`), naive);
   writePng(resolve(outputDir, `optimized-unquantized-${target}.png`), optimizedUnquantized.imageData);
   writePng(resolve(outputDir, `optimized-${target}.png`), optimized.imageData);
   const scale = Math.max(1, Math.floor(512 / target));
-  writePng(resolve(outputDir, `comparison-${target}.png`), contactSheet(preview(naive, scale), preview(optimized.imageData, scale)));
-  console.log(`${target}x${target}: ${describeGrid(optimized.grid)}; shared ${optimized.palette.length}-color palette`);
+  writePng(resolve(outputDir, `comparison-${target}.png`), contactSheet(originalPreview(decoded, 512), preview(optimized.imageData, scale)));
+  console.log(`${target}x${target}: ${describeGrid(optimized.grid, optimized.gridRecovered)}; shared ${optimized.palette.length}-color palette`);
 }

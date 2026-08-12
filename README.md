@@ -77,14 +77,12 @@ Still image: chroma removal → FFT/Sobel grid recovery → edge-aware sampling 
 Animation:   chroma removal → quantized step estimate → true-resolution reconstruction → temporal palette stabilization → sprite sheet
 ```
 
-The repository keeps visual regression fixtures for reviewing algorithm changes. The example begins with a magenta-keyed source image and compares a naïve nearest-neighbor pixelation baseline with Pixelate's optimized result. Both use the same transparent content crop, 256 × 256 canvas, and exact 24-color palette, isolating the spatial image-quality difference.
+The repository keeps visual regression fixtures for reviewing algorithm changes. The comparison places the exact magenta-keyed source beside Pixelate's transparent 256 × 256 extraction, making source fidelity—including the eyes, silhouette, staff, and costume details—easy to inspect.
 
 <div align="center">
-  <p><strong>Example source</strong></p>
-  <img src="public/assets/demo-alchemist.png" width="420" alt="Magenta-keyed pixel-art mage source image" />
-  <p><strong>256 × 256 output comparison</strong></p>
-  <p>Naïve baseline (amber) · Pixelate (teal)</p>
-  <img src="docs/comparisons/pixel-pipeline/comparison-256.png" alt="Naive nearest-neighbor baseline and Pixelate 256 × 256 comparison" />
+  <p><strong>Original source vs. 256 × 256 extraction</strong></p>
+  <p>Original magenta source (coral) · Pixelate extraction (teal)</p>
+  <img src="docs/comparisons/pixel-pipeline/comparison-256.png" alt="Original magenta-keyed source and Pixelate transparent 256 by 256 extraction" />
 </div>
 
 Read the full rationale and reproduction steps in [Pixel-art processing pipeline](docs/pixel-processing.md).
@@ -143,7 +141,7 @@ The verification suite runs TypeScript checks, unit tests, and a production buil
 | `pnpm preview` | Preview the production build locally. |
 | `pnpm test` | Run the Vitest test suite. |
 | `pnpm check` | Run type checking, tests, and the production build. |
-| `pnpm compare:pixels` | Regenerate the naïve-baseline-versus-Pixelate comparison fixtures. |
+| `pnpm compare:pixels` | Regenerate the original-source-versus-Pixelate extraction fixtures. |
 | `pnpm deploy:cloudflare:dry-run` | Validate the Cloudflare Worker bundle without deploying. |
 | `pnpm deploy:cloudflare` | Build and deploy with Wrangler. |
 

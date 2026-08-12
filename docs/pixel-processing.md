@@ -56,13 +56,13 @@ Run:
 pnpm compare:pixels
 ```
 
-The command processes `public/assets/demo-alchemist.png` through a naïve
-nearest-neighbor baseline and Pixelate at 64×64, 128×128, and 256×256. Both
-results use the exact palette derived by Pixelate, so the comparison isolates
-spatial reconstruction quality. Standalone outputs and
-side-by-side contact sheets are written to
-`docs/comparisons/pixel-pipeline/`. In contact sheets, amber identifies the
-naïve baseline and teal identifies Pixelate.
+The command processes `public/assets/demo-alchemist.png` through Pixelate at
+64×64, 128×128, and 256×256. Standalone extracted outputs and side-by-side
+source/extraction contact sheets are written to
+`docs/comparisons/pixel-pipeline/`. In contact sheets, coral identifies the
+exact original magenta source and teal identifies Pixelate's transparent
+extraction. The source panel is resized only for display; processing always
+starts from the original 1254×1254 file.
 
 The comparison is intentionally retained in the repository so changes to the
 algorithm can be reviewed visually instead of relying only on unit tests.

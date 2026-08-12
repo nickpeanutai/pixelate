@@ -399,6 +399,39 @@ describe("local frame and pixel processing", () => {
     expect(grid.fftConfidence).toBe(0);
   });
 
+  it("does not apply a weak FFT lattice that can rewrite source features", () => {
+    const size = 32;
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 8; y < 24; y++) for (let x = 10; x < 22; x++) {
+      data.set([x === 13 || x === 18 ? 245 : 35, 30, 70, 255], (y * size + x) * 4);
+    }
+    const source = new ImageData(data, size, size);
+    const weakGrid = {
+      detected: true, stepX: 4, stepY: 4, columns: 8, rows: 8,
+      confidence: 0.03, fftConfidence: 0.03, fftValid: true,
+      xBoundaries: Array.from({ length: 9 }, (_, index) => index * 4),
+      yBoundaries: Array.from({ length: 9 }, (_, index) => index * 4),
+    };
+    const result = pixelateImageData(source, size, size, 24, { gridHint: weakGrid, quantize: false });
+    expect(result.gridRecovered).toBe(false);
+    expect(result.imageData.data).toEqual(source.data);
+  });
+
+  it("samples the source once when its detected grid is finer than the target", () => {
+    const size = 32;
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let offset = 0; offset < data.length; offset += 4) data.set([80, 45, 130, 255], offset);
+    const fineGrid = {
+      detected: true, stepX: 2, stepY: 2, columns: 16, rows: 16,
+      confidence: 0.8, fftConfidence: 0.8, fftValid: true,
+      xBoundaries: Array.from({ length: 17 }, (_, index) => index * 2),
+      yBoundaries: Array.from({ length: 17 }, (_, index) => index * 2),
+    };
+    const result = pixelateImageData(new ImageData(data, size, size), 8, 8, 8, { gridHint: fineGrid });
+    expect(result.gridRecovered).toBe(false);
+    expect([result.imageData.width, result.imageData.height]).toEqual([8, 8]);
+  });
+
   it("reconstructs every selected animation output pixel independently", () => {
     const data = new Uint8ClampedArray(8 * 8 * 4);
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
