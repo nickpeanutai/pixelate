@@ -1,0 +1,12 @@
+{
+  "name": "Pixelate",
+  "short_name": "Pixelate",
+  "description": "Local-first pixel image and sprite animation workbench",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#10131a",
+  "theme_color": "#10131a",
+  "icons": [
+    { "src": "/assets/b-avatar.jpg", "sizes": "1254x1254", "type": "image/jpeg", "purpose": "any" }
+  ]
+}
